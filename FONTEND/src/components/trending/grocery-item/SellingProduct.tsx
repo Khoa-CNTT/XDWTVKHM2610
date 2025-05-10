@@ -1,20 +1,28 @@
 import { Fade } from "react-awesome-reveal";
-import { Col } from "react-bootstrap";
 import Slider from "react-slick";
 import TrendingItem from "../trendingItem/TrendingItem";
-import useSWR from "swr";
-import fetcher from "../../fetcher-api/Fetcher";
-import Spinner from "@/components/button/Spinner";
+import { Product } from "@/services/productService";
+
+interface SellingProductProps {
+  products?: Product[];
+  onSuccess?: () => void;
+  hasPaginate?: boolean;
+  onError?: () => void;
+}
 
 const SellingProduct = ({
+  products = [],
   onSuccess = () => {},
   hasPaginate = false,
   onError = () => {},
-}) => {
+}: SellingProductProps) => {
+  // Tính toán số hàng dựa trên số lượng sản phẩm
+  const rowsToShow = Math.min(products.length, 3);
+  
   const settings = {
     dots: false,
-    infinite: true,
-    rows: 3,
+    infinite: false, // Tắt infinite để tránh nhân bản
+    rows: rowsToShow || 1, // Sử dụng số hàng dựa trên số lượng sản phẩm
     arrows: true,
     autoplay: false,
     speed: 500,
@@ -25,85 +33,77 @@ const SellingProduct = ({
         breakpoint: 1200,
         settings: {
           slidesToShow: 1,
-          rows: 3,
+          rows: rowsToShow || 1,
         },
       },
       {
         breakpoint: 1024,
         settings: {
           slidesToShow: 1,
-          rows: 3,
+          rows: rowsToShow || 1,
         },
       },
       {
         breakpoint: 992,
         settings: {
           slidesToShow: 1,
-          rows: 3,
+          rows: rowsToShow || 1,
         },
       },
       {
         breakpoint: 767,
         settings: {
           slidesToShow: 1,
-          rows: 2,
+          rows: Math.min(rowsToShow, 2) || 1,
         },
       },
       {
         breakpoint: 576,
         settings: {
           slidesToShow: 1,
-          rows: 2,
+          rows: Math.min(rowsToShow, 2) || 1,
         },
       },
     ],
   };
 
-  const { data, error } = useSWR("/api/selling", fetcher, {
-    onSuccess,
-    onError,
-  });
-
-  if (error) return <div>Failed to load products</div>;
-  if (!data)
+  if (!products || products.length === 0) {
     return (
-      <div>
-        <Spinner />
+      <div className="gi-all-product-content gi-new-product-content mt-1199-40 wow fadeInUp">
+        <Fade triggerOnce direction="up" delay={800}>
+          <div className="section-title">
+            <div className="section-detail">
+              <h2 className="gi-title">
+                Top <span>Bán chạy</span>
+              </h2>
+            </div>
+          </div>
+          <div className="text-center py-4">Không có sản phẩm</div>
+        </Fade>
       </div>
     );
+  }
 
-  const getData = () => {
-    if (hasPaginate) return data.data;
-    else return data;
-  };
+  // Kiểm tra console để xác nhận số lượng sản phẩm
+  console.log('SellingProduct - Số lượng sản phẩm:', products.length, products.map(p => p.name));
 
   return (
-    <>
-      <Col
-        xl={3}
-        lg={6}
-        md={6}
-        sm={12}
-        className="col-xs-6 gi-all-product-content gi-new-product-content mt-1199-40 wow fadeInUp"
-      >
-        <Fade triggerOnce direction="up" delay={800}>
-          <Col md={12}>
-            <div className="section-title">
-              <div className="section-detail">
-                <h2 className="gi-title">
-                  Top <span>Selling</span>
-                </h2>
-              </div>
-            </div>
-          </Col>
-          <Slider {...settings} className="gi-trending-slider">
-            {getData().map((item: any, index: number) => (
-              <TrendingItem key={index} data={item} />
-            ))}
-          </Slider>
-        </Fade>
-      </Col>
-    </>
+    <div className="gi-all-product-content gi-new-product-content mt-1199-40 wow fadeInUp">
+      <Fade triggerOnce direction="up" delay={800}>
+        <div className="section-title">
+          <div className="section-detail">
+            <h2 className="gi-title">
+              Top <span>Bán chạy</span>
+            </h2>
+          </div>
+        </div>
+        <Slider {...settings} className="gi-trending-slider">
+          {products.map((item: Product, index: number) => (
+            <TrendingItem key={`${item._id}-${index}`} data={item} />
+          ))}
+        </Slider>
+      </Fade>
+    </div>
   );
 };
 

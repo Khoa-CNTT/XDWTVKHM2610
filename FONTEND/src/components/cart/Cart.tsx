@@ -1,98 +1,111 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, FormEvent } from "react";
 import { Swiper, SwiperSlide } from "swiper/react";
 import ItemCard from "../product-item/ItemCard";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "../../store";
-import { removeItem } from "../../store/reducers/cartSlice";
+import { removeCartItemAsync, fetchCartFromAPI, createOrderAsync } from "../../store/reducers/cartSlice";
 import { Fade } from "react-awesome-reveal";
-import useSWR from "swr";
-import fetcher from "../fetcher-api/Fetcher";
 import Spinner from "../button/Spinner";
 import DiscountCoupon from "../discount-coupon/DiscountCoupon";
 import QuantitySelector from "../quantity-selector/QuantitySelector";
 import Link from "next/link";
+import { productService, Product } from "../../services/productService";
+import { AppDispatch } from "../../store";
+import { CreateOrderRequest, OrderItemRequest, CartItem } from "../../services/cartService";
+import { useRouter } from "next/navigation";
+import { showSuccessToast, showErrorToast } from "../toast-popup/Toastify";
+import { Modal } from "../modal/Modal";
+import { toast } from "react-toastify";
 
-interface Country {
-  id: string;
-  name: any;
-  iso2: string;
-}
-
-interface State {
-  id: string;
-  name: any;
-  state_code: string;
-}
+// Thêm hàm showWarningToast vì nó chưa được export từ file Toastify
+const showWarningToast = (message: string) => {
+  toast.warning(message);
+};
 
 const Cart = ({
   onSuccess = () => {},
   hasPaginate = false,
   onError = () => {},
 }) => {
+  const dispatch = useDispatch<AppDispatch>();
   const cartItems = useSelector((state: RootState) => state.cart.items);
-  const dispatch = useDispatch();
-  const [filteredCountryData, setFilteredCountryData] = useState<Country[]>([]);
-  const [filteredStateData, setFilteredStateData] = useState<State[]>([]);
-  const [loadingStates, setLoadingStates] = useState(false);
+  const loading = useSelector((state: RootState) => state.cart.loading);
+  const error = useSelector((state: RootState) => state.cart.error);
+  
   const [subTotal, setSubTotal] = useState(0);
   const [vat, setVat] = useState(0);
   const [discount, setDiscount] = useState(0);
-
-  const { data: country } = useSWR("/api/country", fetcher, {
-    onSuccess,
-    onError,
-  });
+  const [newProducts, setNewProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [recipientName, setRecipientName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [address, setAddress] = useState('');
+  const router = useRouter();
+  
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalContent, setModalContent] = useState({ title: '', message: '', onConfirm: () => {} });
+  
+  // Lấy user ID từ localStorage khi component mount
+  useEffect(() => {
+    const fetchCartData = async () => {
+      try {
+        // Lấy thông tin người dùng từ localStorage
+        const userInfoStr = localStorage.getItem('login_user');
+        if (!userInfoStr) {
+          console.log('Người dùng chưa đăng nhập');
+          return;
+        }
+        
+        const userInfo = JSON.parse(userInfoStr);
+        if (!userInfo || !userInfo.id) {
+          console.log('Không tìm thấy ID người dùng');
+          return;
+        }
+        
+        // Kiểm tra token có tồn tại không
+        const token = localStorage.getItem('login_token');
+        if (!token) {
+          console.log('Token không tồn tại hoặc đã hết hạn');
+          // Thông báo cho người dùng đăng nhập lại
+          showWarningToast('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');
+          // Có thể chuyển hướng đến trang đăng nhập
+          return;
+        }
+        
+        console.log('Đang lấy giỏ hàng cho người dùng ID:', userInfo.id);
+        await dispatch(fetchCartFromAPI(userInfo.id));
+      } catch (error) {
+        console.error('Lỗi khi lấy giỏ hàng:', error);
+        // Hiển thị thông báo lỗi cụ thể
+        if (error.response && error.response.status === 401) {
+          showWarningToast('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');
+        } else {
+          showErrorToast('Có lỗi xảy ra khi tải giỏ hàng, vui lòng thử lại sau');
+        }
+      }
+    };
+    
+    fetchCartData();
+  }, [dispatch]);
 
   useEffect(() => {
-    if (country) {
-      setFilteredCountryData(
-        country.map((country: any) => ({
-          id: country.id,
-          countryName: country.name,
-          iso2: country.iso2,
-        }))
-      );
-    }
-  }, [country]);
-
-  const handleCountryChange = async (e: any) => {
-    const { value } = e.target;
-    setLoadingStates(true);
-    const response = await fetcher(`/api/state`, {
-      country_code: value,
-    });
-    setLoadingStates(false);
-    setFilteredStateData(
-      response.map((state: any) => ({
-        id: state.id,
-        StateName: state.name,
-        state_code: state.state_code,
-      }))
-    );
-  };
-
-  const handleStateChange = async (e: any) => {
-    const { value, options, selectedIndex } = e.target;
-    const stateName = options[selectedIndex].text;
-  };
-
-  useEffect(() => {
-    if (cartItems.length === 0) {
+    if (loading || cartItems.length === 0) {
       setSubTotal(0);
       setVat(0);
       return;
     }
 
     const subtotal = cartItems.reduce(
-      (acc, item) => acc + item.newPrice * item.quantity,
+      (acc, item) => acc + item.price * item.quantity,
       0
     );
     setSubTotal(subtotal);
     // Calculate VAT
-    const vatAmount = subtotal * 0.2;
+    const vatAmount = subtotal * 0.1; // 10% VAT cho Việt Nam
     setVat(vatAmount);
-  }, [cartItems]);
+  }, [cartItems, loading]);
 
   const handleDiscountApplied = (discount) => {
     setDiscount(discount);
@@ -101,31 +114,128 @@ const Cart = ({
   const discountAmount = subTotal * (discount / 100);
   const total = subTotal + vat - discountAmount;
 
-  const handleRemoveFromCart = (item: any) => {
-    dispatch(removeItem(item.id));
+  const handleRemoveFromCart = (item: CartItem) => {
+    // Mở modal xác nhận thay vì window.confirm
+    setModalContent({
+      title: 'Xác nhận xóa',
+      message: `Bạn có chắc muốn xóa sản phẩm "${item.name}" khỏi giỏ hàng?`,
+      onConfirm: () => {
+        
+        dispatch(removeCartItemAsync(item._id))
+          .unwrap()
+          .then(() => {
+            setIsModalOpen(false);
+          })
+          .catch((error) => {
+            showErrorToast(error || "Có lỗi xảy ra khi xóa sản phẩm");
+            setIsModalOpen(false);
+          });
+      }
+    });
+    setIsModalOpen(true);
   };
 
-  const { data, error } = useSWR("/api/deal", fetcher, { onSuccess, onError });
+  useEffect(() => {
+    const loadProducts = async () => {
+      setProductsLoading(true);
+      try {
+        const products = await productService.getAllProducts();
+        setNewProducts(products);
+      } catch (error) {
+        console.error("Lỗi khi tải sản phẩm:", error);
+        // Sử dụng dữ liệu mẫu nếu có lỗi
+        setNewProducts(productService.getSampleProducts());
+      } finally {
+        setProductsLoading(false);
+      }
+    };
+    
+    loadProducts();
+  }, []);
 
-  if (error) return <div>Failed to load products</div>;
-  if (!data)
+  const handleCreateOrder = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    
+    if (!recipientName || !phoneNumber || !address) {
+      showWarningToast("Vui lòng nhập đầy đủ thông tin giao hàng!");
+      return;
+    }
+    
+    if (cartItems.length === 0) {
+      showWarningToast("Giỏ hàng của bạn đang trống!");
+      return;
+    }
+    
+    // Lấy thông tin người dùng từ localStorage
+    const userInfoStr = localStorage.getItem('login_user');
+    if (!userInfoStr) {
+      showWarningToast('Bạn cần đăng nhập để tạo đơn hàng');
+      return;
+    }
+    
+    const userInfo = JSON.parse(userInfoStr);
+    if (!userInfo || !userInfo.id) {
+      showErrorToast('Không tìm thấy ID người dùng');
+      return;
+    }
+    
+    // Chuẩn bị danh sách sản phẩm cho đơn hàng
+    const orderItemList: OrderItemRequest[] = cartItems.map(item => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      name: item.name,
+      price: item.price
+    }));
+    
+    // Tạo đối tượng đơn hàng
+    const orderData: CreateOrderRequest = {
+      userId: userInfo.id,
+      totalAmount: total,
+      status: "pending",
+      address,
+      phoneNumber,
+      recipientName,
+      orderItemList
+    };
+    
+    dispatch(createOrderAsync(orderData))
+      .unwrap()
+      .then(() => {
+        // Chuyển hướng đến trang xác nhận đơn hàng hoặc trang chủ
+        showSuccessToast('Đơn hàng đã được tạo thành công!');
+        router.push('/order-success');
+      })
+      .catch((error) => {
+        console.error('Lỗi khi tạo đơn hàng:', error);
+        showErrorToast(`Đã xảy ra lỗi khi tạo đơn hàng: ${error}`);
+      });
+  };
+
+  if (productsLoading) {
     return (
       <div>
         <Spinner />
       </div>
     );
-
-  const getData = () => {
-    if (hasPaginate) return data.data;
-    else return data;
-  };
+  }
 
   return (
     <>
+      {/* Modal component for confirmations */}
+      {isModalOpen && (
+        <Modal 
+          title={modalContent.title}
+          message={modalContent.message}
+          onConfirm={modalContent.onConfirm}
+          onCancel={() => setIsModalOpen(false)}
+          isOpen={isModalOpen}
+        />
+      )}
+      
       <section className="gi-cart-section padding-tb-40">
         <h2 className="d-none">Cart Page</h2>
         <div className="container">
-          {cartItems.length === 0 ? (
+          {!loading && cartItems.length === 0 && !error ? (
             <div
               style={{
                 textAlign: "center",
@@ -135,7 +245,7 @@ const Cart = ({
               className="gi-pro-content cart-pro-title"
             >
               {" "}
-              Add item in a cart.
+              Giỏ hàng trống. Vui lòng thêm sản phẩm vào giỏ hàng.
             </div>
           ) : (
             <div className="row">
@@ -145,70 +255,53 @@ const Cart = ({
                   {/* <!-- Sidebar Summary Block --> */}
                   <div className="gi-sidebar-block">
                     <div className="gi-sb-title">
-                      <h3 className="gi-sidebar-title">Summary</h3>
+                      <h3 className="gi-sidebar-title">Tóm tắt</h3>
                     </div>
                     <div className="gi-sb-block-content">
-                      <h4 className="gi-ship-title">Estimate Shipping</h4>
+                      <h4 className="gi-ship-title">Thông tin giao hàng</h4>
                       <div className="gi-cart-form">
-                        <p>Enter your destination to get a shipping estimate</p>
+                        <p>Nhập thông tin giao hàng của bạn</p>
                         <form action="#" method="post">
                           <span className="gi-cart-wrap">
-                            <label>Country *</label>
-                            <span className="gi-cart-select-inner">
-                              <select
-                                name="gi_cart_country"
-                                id="gi-cart-select-country"
-                                className="gi-cart-select"
-                                defaultValue=""
-                                onChange={handleCountryChange}
-                              >
-                                <option value="" disabled>
-                                  Country
-                                </option>
-                                {filteredCountryData.map(
-                                  (country: any, index: number) => (
-                                    <option key={index} value={country.iso2}>
-                                      {country.countryName}
-                                    </option>
-                                  )
-                                )}
-                              </select>
-                            </span>
-                          </span>
-                          <span className="gi-cart-wrap">
-                            <label>State/Province</label>
-                            <span className="gi-cart-select-inner">
-                              <select
-                                name="state"
-                                id="gi-select-state"
-                                className="gi-register-select"
-                                onChange={handleStateChange}
-                              >
-                                <option value="" disabled>
-                                  Region/State
-                                </option>
-                                {loadingStates ? (
-                                  <option disabled>Loading...</option>
-                                ) : (
-                                  filteredStateData.map((state: any, index) => (
-                                    <option
-                                      key={index}
-                                      value={state.state_code}
-                                    >
-                                      {state.StateName}
-                                    </option>
-                                  ))
-                                )}
-                              </select>
-                            </span>
-                          </span>
-                          <span className="gi-cart-wrap">
-                            <label>Zip/Postal Code</label>
+                            <label>Họ và tên người nhận *</label>
                             <input
                               type="text"
-                              name="postalcode"
-                              placeholder="Zip/Postal Code"
+                              name="recipient_name"
+                              placeholder="Nhập họ và tên người nhận"
+                              required
+                              value={recipientName}
+                              onChange={(e) => setRecipientName(e.target.value)}
                             />
+                          </span>
+                          <span className="gi-cart-wrap">
+                            <label>Số điện thoại người nhận *</label>
+                            <input
+                              type="tel"
+                              name="recipient_phone"
+                              placeholder="Nhập số điện thoại người nhận"
+                              required
+                              value={phoneNumber}
+                              onChange={(e) => setPhoneNumber(e.target.value)}
+                            />
+                          </span>
+                          <span className="gi-cart-wrap">
+                            <label>Địa chỉ giao hàng *</label>
+                            <textarea
+                              name="delivery_address"
+                              placeholder="Nhập địa chỉ giao hàng đầy đủ"
+                              rows={3}
+                              required
+                              style={{
+                                width: '100%',
+                                padding: '8px 15px',
+                                borderRadius: '5px',
+                                border: '1px solid #e5e5e5',
+                                fontSize: '14px',
+                                resize: 'none'
+                              }}
+                              value={address}
+                              onChange={(e) => setAddress(e.target.value)}
+                            ></textarea>
                           </span>
                         </form>
                       </div>
@@ -218,15 +311,21 @@ const Cart = ({
                       <div className="gi-cart-summary-bottom">
                         <div className="gi-cart-summary">
                           <div>
-                            <span className="text-left">Sub-Total</span>
+                            <span className="text-left">Tạm tính</span>
                             <span className="text-right">
-                              ${subTotal.toFixed(2)}
+                              {new Intl.NumberFormat('vi-VN', { 
+                                style: 'currency', 
+                                currency: 'VND' 
+                              }).format(subTotal)}
                             </span>
                           </div>
                           <div>
-                            <span className="text-left">Delivery Charges</span>
+                            <span className="text-left">VAT (10%)</span>
                             <span className="text-right">
-                              ${vat.toFixed(2)}
+                              {new Intl.NumberFormat('vi-VN', { 
+                                style: 'currency', 
+                                currency: 'VND' 
+                              }).format(vat)}
                             </span>
                           </div>
                           <div>
@@ -245,7 +344,7 @@ const Cart = ({
                                 className="gi-coupan"
                                 type="text"
                                 required
-                                placeholder="Enter Your Coupan Code"
+                                placeholder="Nhập mã giảm giá của bạn"
                                 name="gi-coupan"
                                 defaultValue=""
                               />
@@ -255,14 +354,17 @@ const Cart = ({
                                 name="subscribe"
                                 defaultValue=""
                               >
-                                Apply
+                                Áp dụng
                               </button>
                             </form>
                           </div>
                           <div className="gi-cart-summary-total">
-                            <span className="text-left">Total Amount</span>
+                            <span className="text-left">Tổng cộng</span>
                             <span className="text-right">
-                              ${total.toFixed(2)}
+                              {new Intl.NumberFormat('vi-VN', { 
+                                style: 'currency', 
+                                currency: 'VND' 
+                              }).format(total)}
                             </span>
                           </div>
                         </div>
@@ -281,77 +383,104 @@ const Cart = ({
                           <table>
                             <thead>
                               <tr>
-                                <th>Product</th>
-                                <th>Price</th>
+                                <th>Sản phẩm</th>
+                                <th>Giá</th>
                                 <th style={{ textAlign: "center" }}>
-                                  Quantity
+                                  Số lượng
                                 </th>
-                                <th>Total</th>
-                                <th>Action</th>
+                                <th>Thành tiền</th>
+                                <th>Hành động</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {cartItems.map((item: any, index: number) => (
-                                <tr key={index}>
-                                  <td
-                                    data-label="Product"
-                                    className="gi-cart-pro-name"
-                                  >
-                                    <a href="/product-left-sidebar">
-                                      <img
-                                        className="gi-cart-pro-img mr-4"
-                                        src={item.image}
-                                        alt=""
-                                      />
-                                      {item.title}
-                                    </a>
-                                  </td>
-                                  <td
-                                    data-label="Price"
-                                    className="gi-cart-pro-price"
-                                  >
-                                    <span className="amount">
-                                      ${item.newPrice}
-                                    </span>
-                                  </td>
-                                  <td
-                                    data-label="Quantity"
-                                    className="gi-cart-pro-qty"
-                                    style={{ textAlign: "center" }}
-                                  >
-                                    <div className="cart-qty-plus-minus">
-                                      <QuantitySelector
-                                        quantity={item.quantity}
-                                        id={item.id}
-                                      />
-                                    </div>
-                                  </td>
-                                  <td
-                                    data-label="Total"
-                                    className="gi-cart-pro-subtotal"
-                                  >
-                                    ${item.newPrice * item.quantity}
-                                  </td>
-                                  <td
-                                    onClick={() => handleRemoveFromCart(item)}
-                                    data-label="Remove"
-                                    className="gi-cart-pro-remove"
-                                  >
-                                    <a href="#">
-                                      <i className="gicon gi-trash-o"></i>
-                                    </a>
+                              {loading ? (
+                                <tr>
+                                  <td colSpan={5} style={{ textAlign: 'center' }}>
+                                    <Spinner />
+                                    <p>Đang tải giỏ hàng...</p>
                                   </td>
                                 </tr>
-                              ))}
+                              ) : error ? (
+                                <tr>
+                                  <td colSpan={5} style={{ textAlign: 'center', color: 'red' }}>
+                                    Có lỗi khi tải giỏ hàng: {error}
+                                  </td>
+                                </tr>
+                              ) : cartItems && cartItems.length > 0 ? (
+                                cartItems.map((item: CartItem, index: number) => (
+                                  <tr key={index}>
+                                    <td
+                                      data-label="Sản phẩm"
+                                      className="gi-cart-pro-name"
+                                    >
+                                      <Link href={`/product-left-sidebar/${item.productId}`}>
+                                        <img
+                                          className="gi-cart-pro-img mr-4"
+                                          src={item.image_url}
+                                          alt={item.name}
+                                        />
+                                        {item.name}
+                                      </Link>
+                                    </td>
+                                    <td
+                                      data-label="Giá"
+                                      className="gi-cart-pro-price"
+                                    >
+                                      <span className="amount">
+                                        {new Intl.NumberFormat('vi-VN', { 
+                                          style: 'currency', 
+                                          currency: 'VND' 
+                                        }).format(item.price)}
+                                      </span>
+                                    </td>
+                                    <td
+                                      data-label="Số lượng"
+                                      className="gi-cart-pro-qty"
+                                      style={{ textAlign: "center" }}
+                                    >
+                                      <div className="cart-qty-plus-minus">
+                                        <QuantitySelector
+                                          quantity={item.quantity}
+                                          id={item._id}
+                                        />
+                                      </div>
+                                    </td>
+                                    <td
+                                      data-label="Thành tiền"
+                                      className="gi-cart-pro-subtotal"
+                                    >
+                                      {new Intl.NumberFormat('vi-VN', { 
+                                        style: 'currency', 
+                                        currency: 'VND' 
+                                      }).format(item.price * item.quantity)}
+                                    </td>
+                                    <td
+                                      onClick={() => handleRemoveFromCart(item)}
+                                      data-label="Remove"
+                                      className="gi-cart-pro-remove"
+                                    >
+                                      <a href="#">
+                                        <i className="gicon gi-trash-o"></i>
+                                      </a>
+                                    </td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={5} style={{ textAlign: 'center' }}>
+                                    Giỏ hàng trống
+                                  </td>
+                                </tr>
+                              )}
                             </tbody>
                           </table>
                         </div>
                         <div className="row">
                           <div className="col-lg-12">
                             <div className="gi-cart-update-bottom">
-                              <Link href="/">Continue Shopping</Link>
-                              <Link href="/checkout" className="gi-btn-2">
-                                Check Out
+                              <Link href="/">Tiếp tục mua sắm</Link>
+                              <Link href="/checkout" className="gi-btn-2" onClick={handleCreateOrder}>
+                                Tạo Đơn Hàng
                               </Link>
                             </div>
                           </div>
@@ -381,23 +510,23 @@ const Cart = ({
                   data-aos-duration="2000"
                   data-aos-delay="200"
                 >
-                  <>
+                  <div>
                     <h2 className="gi-title">
-                      New <span>Arrivals</span>
+                      Sản phẩm <span>Mới</span>
                     </h2>
-                    <p>Browse The Collection of Top Products</p>
-                  </>
+                    <p>Khám phá bộ sưu tập sản phẩm hàng đầu</p>
+                  </div>
                 </Fade>
                 <Fade
                   triggerOnce
                   direction="up"
                   duration={2000}
                   delay={200}
-                  className="gi-new-block m-minus-lr-12"
                   data-aos="fade-up"
                   data-aos-duration="2000"
                   data-aos-delay="300"
                 >
+                  <div className="gi-new-block m-minus-lr-12">
                   <Swiper
                     loop={true}
                     autoplay={{ delay: 1000 }}
@@ -428,12 +557,13 @@ const Cart = ({
                     }}
                     className="deal-slick-carousel gi-product-slider"
                   >
-                    {getData().map((item: any, index: number) => (
+                    {newProducts.map((item: Product, index: number) => (
                       <SwiperSlide key={index}>
                         <ItemCard data={item} />
                       </SwiperSlide>
                     ))}
                   </Swiper>
+                  </div>
                 </Fade>
               </div>
             </div>

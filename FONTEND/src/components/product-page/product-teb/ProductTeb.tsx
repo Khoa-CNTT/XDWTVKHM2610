@@ -1,10 +1,15 @@
+"use client";
 import React, { useEffect, useState } from "react";
-import { Tab, TabList, Tabs } from "react-tabs";
+import { Tab, TabList, TabPanel, Tabs } from "react-tabs";
 import { Fade } from "react-awesome-reveal";
 import RatingComponent from "@/components/stars/RatingCompoents";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import { Form } from "react-bootstrap";
+import { Col, Row } from "react-bootstrap";
+import "react-tabs/style/react-tabs.css";
+import { reviewsApi } from "@/utils/api";
+import { log } from "console";
 
 export interface RegistrationData {
   firstName: string;
@@ -18,74 +23,159 @@ export interface RegistrationData {
   state: string;
   profilePhoto?: string;
   description: string;
+  _id?: string;
 }
 
-const getRegistrationData = () => {
+export interface Review {
+  _id: string;
+  productId: string;
+  userId?: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+  updatedAt: string;
+  fullName?: string;
+  avataUrl?: string | null;
+}
+
+export interface UserData {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
+  profilePhoto?: string;
+}
+
+interface ProductTebProps {
+  productId: string;
+  reviews?: Review[];
+}
+
+const getUserData = () => {
   if (typeof window !== "undefined") {
-    const data = localStorage.getItem("registrationData");
+    const data = localStorage.getItem("login_user");
     return data ? JSON.parse(data) : null;
   }
   return null;
 };
 
-const ProductTeb = () => {
+const ProductTeb = ({ productId, reviews: apiReviews = [] }: ProductTebProps) => {
   const login = useSelector(
     (state: RootState) => state.registration.isAuthenticated
   );
-  const [userData, setUserData] = useState<any | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [validated, setValidated] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [comment, setComment] = useState("");
   const [rating, setRating] = useState(0);
-  const [reviews, setReviews] = useState([
-    {
-      name: "Moris Willson",
-      rating: 3,
-      comment:
-        "Lorem Ipsum has been the industry's standard dummy text ever since the 1500s...",
-      avatar: "/assets/img/avatar/placeholder.jpg",
-    },
-  ]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  // Sử dụng đánh giá từ API
+  useEffect(() => {
+    if (apiReviews && apiReviews.length > 0) {
+      setReviews(apiReviews);
+    }
+  }, [apiReviews]);
 
   useEffect(() => {
-    if (login) {
-      const data = getRegistrationData();
-      if (data?.length > 0) {
-        setUserData(data[data.length - 1]);
-      }
+    // Lấy thông tin người dùng từ localStorage
+    const loggedInUser = getUserData();
+    if (loggedInUser) {
+      console.log('Thông tin người dùng:', loggedInUser);
+      setUserData(loggedInUser);
     }
-  }, [login]);
+  }, []);
 
   const handleProductClick = (index: number) => {
     setSelectedIndex(index);
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
 
     if (form.checkValidity() === false) {
       e.stopPropagation();
-    } else {
-      if (userData && comment && rating) {
-        setReviews([
-          ...reviews,
-          {
-            name: `${userData.firstName} ${userData.lastName}`,
-            rating,
-            comment,
-            avatar:
-              userData.profilePhoto || "/assets/img/avatar/placeholder.jpg",
-          },
-        ]);
-
-        setComment("");
-        setRating(0);
-      }
+      setValidated(true);
+      return;
     }
 
-    setValidated(true);
+    if (!userData || !userData.id) {
+      console.error("Thông tin người dùng không hợp lệ:", userData);
+      setSubmitError("Thông tin người dùng không hợp lệ");
+      return;
+    }
+
+    if (!rating) {
+      setSubmitError("Vui lòng chọn số sao đánh giá");
+      return;
+    }
+
+    if (!comment.trim()) {
+      setSubmitError("Vui lòng nhập nội dung đánh giá");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setSubmitError("");
+
+      const reviewData = {
+        userId: userData.id,
+        productId: productId,
+        rating: rating,
+        comment: comment
+      };
+
+      console.log("Dữ liệu gửi đánh giá:", reviewData);
+      
+      const response = await reviewsApi.createReview(reviewData);
+      console.log("Kết quả gửi đánh giá:", response.data);
+      
+      if (response.status === 200 || response.status === 201) {
+        // Tạo đánh giá mới để hiển thị ngay
+        const newReview: Review = {
+          _id: response.data?.data?._id || Date.now().toString(),
+          productId: productId,
+          userId: userData.id,
+          rating: rating,
+          comment: comment,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          fullName: userData.fullName,
+          avataUrl: userData.profilePhoto || null
+        };
+
+        // Thêm đánh giá mới vào đầu danh sách
+        setReviews([newReview, ...reviews]);
+
+        // Reset form
+        setComment("");
+        setRating(0);
+        setValidated(false);
+      }
+    } catch (error) {
+      console.error("Lỗi khi gửi đánh giá:", error);
+      setSubmitError("Có lỗi xảy ra khi gửi đánh giá. Vui lòng thử lại sau.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  // Format thời gian
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   return (
     <>
       <Tabs
@@ -96,253 +186,86 @@ const ProductTeb = () => {
         <div className="gi-single-pro-tab-wrapper">
           <TabList className="gi-single-pro-tab-nav">
             <ul className="nav nav-tabs" id="myTab" role="tablist">
-              <Tab className="nav-item" role="presentation" key={"details"}>
-                <button
-                  className={`nav-link ${selectedIndex == 0 ? "active" : ""}`}
-                  id="details-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#gi-spt-nav-details"
-                  type="button"
-                  role="tab"
-                  aria-controls="gi-spt-nav-details"
-                  aria-selected="true"
-                  onClick={() => handleProductClick(0)}
-                >
-                  Detail
-                </button>
-              </Tab>
-              <Tab className="nav-item" role="presentation" key={"info"}>
-                <button
-                  className={`nav-link ${selectedIndex == 1 ? "active" : ""}`}
-                  id="info-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#gi-spt-nav-info"
-                  type="button"
-                  role="tab"
-                  aria-controls="gi-spt-nav-info"
-                  aria-selected="false"
-                  onClick={() => handleProductClick(1)}
-                >
-                  Specifications
-                </button>
-              </Tab>
-              <Tab className="nav-item" role="presentation" key={"vendor"}>
-                <button
-                  className={`nav-link ${selectedIndex == 2 ? "active" : ""}`}
-                  onClick={() => handleProductClick(2)}
-                  id="vendor-tab"
-                  data-bs-toggle="tab"
-                  data-bs-target="#gi-spt-nav-vendor"
-                  type="button"
-                  role="tab"
-                  aria-controls="gi-spt-nav-vendor"
-                  aria-selected="false"
-                >
-                  Vendor
-                </button>
-              </Tab>
               <Tab className="nav-item" role="presentation" key={"review"}>
                 <button
-                  className={`nav-link ${selectedIndex == 3 ? "active" : ""}`}
-                  onClick={() => handleProductClick(3)}
+                  className="nav-link active"
                   id="review-tab"
                   data-bs-toggle="tab"
                   data-bs-target="#gi-spt-nav-review"
                   type="button"
                   role="tab"
                   aria-controls="gi-spt-nav-review"
-                  aria-selected="false"
+                  aria-selected="true"
+                  onClick={() => handleProductClick(0)}
                 >
-                  Reviews
+                  Đánh giá ({reviews.length})
                 </button>
               </Tab>
             </ul>
           </TabList>
-          <div className="tab-content  gi-single-pro-tab-content">
+          <div className="tab-content gi-single-pro-tab-content">
+            <TabPanel>
             <Fade
               duration={1000}
-              className={`tab-pane fade ${
-                selectedIndex === 0 ? "show active" : ""
-              }`}
+              className="tab-pane fade show active"
             >
-              <div className="gi-single-pro-tab-desc">
-                <p>
-                  Lorem Ipsum is simply dummy text of the printing and
-                  typesetting industry. Lorem Ipsum has been the industry s
-                  standard dummy text ever since the 1500s, when an unknown
-                  printer took a galley of type and scrambled it to make a type
-                  specimen book. It has survived not only five centuries, but
-                  also the leap into electronic typesetting, remaining
-                  essentially unchanged.
-                </p>
-                <ul>
-                  <li>
-                    Any Product types that You want - Simple, Configurable
-                  </li>
-                  <li>Downloadable/Digital Products, Virtual Products</li>
-                  <li>Inventory Management with Backordered items</li>
-                  <li>Flatlock seams throughout.</li>
-                </ul>
-                <p>
-                  Lorem Ipsum is simply dummy text of the printing and
-                  typesetting industry. Lorem Ipsum has been the industry s
-                  standard dummy text ever since the 1500s, when an unknown
-                  printer took a galley of type and scrambled it to make a type
-                  specimen book. It has survived not only five centuries, but
-                  also the leap into electronic typesetting, remaining
-                  essentially unchanged.
-                </p>
-                <p>
-                  There are many variations of passages of Lorem Ipsum
-                  available, but the majority have suffered alteration in some
-                  form, by injected humour, or randomised words which don`t look
-                  even slightly believable. If you are going to use a passage of
-                  Lorem Ipsum, you need to be sure there isn`t anything
-                  embarrassing hidden in the middle of text. All the Lorem Ipsum
-                  generators on the Internet tend to repeat predefined chunks as
-                  necessary, making this the first true generator on the
-                  Internet. It uses a dictionary of over 200 Latin words,
-                  combined with a handful of model sentence structures, to
-                  generate Lorem Ipsum which looks reasonable. The generated
-                  Lorem Ipsum is therefore always free from repetition, injected
-                  humour, or non-characteristic words etc.
-                </p>
-              </div>
-            </Fade>
-            <Fade
-              duration={1000}
-              className={`tab-pane fade ${
-                selectedIndex === 1 ? "show active" : ""
-              }`}
-            >
-              <div className="gi-single-pro-tab-moreinfo">
-                <p>
-                  Lorem Ipsum is simply dummy text of the printing and
-                  typesetting industry. Lorem Ipsum has been the industry`s
-                  standard dummy text ever since the 1500s, when an unknown
-                  printer took a galley of type and scrambled it to make a type
-                  specimen book. It has survived not only five centuries.
-                </p>
-                <ul>
-                  <li>
-                    <span>Model</span> SKU140
-                  </li>
-                  <li>
-                    <span>Weight</span> 500 g
-                  </li>
-                  <li>
-                    <span>Dimensions</span> 35 × 30 × 7 cm
-                  </li>
-                  <li>
-                    <span>Color</span> Black, Pink, Red, White
-                  </li>
-                  <li>
-                    <span>Size</span> 10 X 20
-                  </li>
-                </ul>
-              </div>
-            </Fade>
-            <Fade
-              duration={1000}
-              className={`tab-pane fade ${
-                selectedIndex === 2 ? "show active" : ""
-              }`}
-            >
-              <div className="gi-single-pro-tab-moreinfo">
-                <div className="gi-product-vendor">
-                  <div className="gi-vendor-info">
-                    <span>
-                      <img
-                        src={
-                          process.env.NEXT_PUBLIC_URL +
-                          "/assets/img/vendor/3.jpg"
-                        }
-                        alt="vendor"
-                      />
-                    </span>
-                    <div>
-                      <h5>Ocean Crate</h5>
-                      <p>Products : 358</p>
-                      <p>Sales : 5587</p>
-                    </div>
-                  </div>
-                  <div className="gi-detail">
-                    <ul>
-                      <li>
-                        <span>Phone No. :</span> +00 987654321
-                      </li>
-                      <li>
-                        <span>Email. :</span> Example@gmail.com
-                      </li>
-                      <li>
-                        <span>Address. :</span> 2548 Broaddus Maple Court,
-                        Madisonville KY 4783, USA.
-                      </li>
-                    </ul>
-                    <p>
-                      Lorem Ipsum is simply dummy text of the printing and
-                      typesetting industry. Lorem Ipsum has been the industry `
-                      s standard dummy text ever since the 1500s, when an
-                      unknown printer took a galley of type and scrambled it to
-                      make a type specimen book. It has survived not only five
-                      centuries, but also the leap into electronic typesetting,
-                      remaining essentially unchanged.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </Fade>
-            <Fade
-              duration={1000}
-              className={`tab-pane fade ${
-                selectedIndex === 3 ? "show active" : ""
-              }`}
-            >
-              {!login ? (
+                {!userData ? (
                 <div className="container">
                   <p>
-                    Please <a href="/login">login</a> or{" "}
-                    <a href="/register">register</a> to review the product.
+                    Vui lòng <a href="/login">đăng nhập</a> hoặc{" "}
+                    <a href="/register">đăng ký</a> để đánh giá sản phẩm.
                   </p>
                 </div>
               ) : (
                 <div className="row">
                   <div className="gi-t-review-wrapper">
-                    {reviews.map((data, index) => (
-                      <div key={index} className="gi-t-review-item">
+                      {reviews.length > 0 ? (
+                        reviews.map((review, index) => (
+                          <div key={review._id} className="gi-t-review-item" style={{ marginBottom: '20px', padding: '15px', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
                         <div className="gi-t-review-avtar">
                           <img
                             src={
-                              data.avatar ||
-                              process.env.NEXT_PUBLIC_URL +
+                                  review.avataUrl ||
                                 "/assets/img/avatar/placeholder.jpg"
                             }
                             alt="user"
+                                style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }}
                           />
                         </div>
-                        <div className="gi-t-review-content">
+                            <div className="gi-t-review-content" style={{ paddingLeft: '15px' }}>
                           <div className="gi-t-review-top">
-                            <div className="gi-t-review-name">{data.name}</div>
-                            <div className="gi-t-review-rating">
+                                <div className="gi-t-review-name" style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                                  {review.fullName || "Người dùng"}
+                                </div>
+                                <div className="gi-t-review-rating" style={{ margin: '8px 0' }}>
                               {[...Array(5)].map((_, i) => (
                                 <i
                                   key={i}
                                   className={`gicon gi-star ${
-                                    i < data.rating ? "fill" : "gi-star-o"
+                                        i < review.rating ? "fill" : "gi-star-o"
                                   }`}
+                                      style={{ color: i < review.rating ? '#FFA534' : '#ddd', marginRight: '2px' }}
                                 ></i>
                               ))}
+                                </div>
+                                <div className="gi-t-review-date" style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                                  {formatDate(review.createdAt)}
+                                </div>
+                              </div>
+                              <div className="gi-t-review-bottom" style={{ marginTop: '10px' }}>
+                                <p style={{ margin: '0', lineHeight: '1.6' }}>{review.comment}</p>
+                              </div>
                             </div>
                           </div>
-                          <div className="gi-t-review-bottom">
-                            <p>{data.comment}</p>
-                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-4">
+                          <p>Chưa có đánh giá nào cho sản phẩm này.</p>
                         </div>
-                      </div>
-                    ))}
+                      )}
                   </div>
                   <div className="gi-ratting-content">
-                    <h3>Add a Review</h3>
+                    <h3>Thêm đánh giá</h3>
                     <div className="gi-ratting-form">
                       <Form
                         noValidate
@@ -361,21 +284,25 @@ const ProductTeb = () => {
                             <Form.Control
                               as="textarea"
                               name="comment"
-                              placeholder="Enter Your Comment"
+                              placeholder="Nhập đánh giá của bạn"
                               value={comment}
                               onChange={(e) => setComment(e.target.value)}
                               required
                             />
                             <Form.Control.Feedback type="invalid">
-                              Please Enter your reply
+                              Vui lòng nhập đánh giá của bạn
                             </Form.Control.Feedback>
                           </Form.Group>
+                            {submitError && (
+                              <div className="text-danger mb-3">{submitError}</div>
+                            )}
                           <button
                             style={{ marginTop: "15px" }}
                             className="gi-btn-2"
                             type="submit"
+                              disabled={isSubmitting}
                           >
-                            Submit
+                              {isSubmitting ? "Đang gửi..." : "Gửi đánh giá"}
                           </button>
                         </div>
                       </Form>
@@ -384,6 +311,7 @@ const ProductTeb = () => {
                 </div>
               )}
             </Fade>
+            </TabPanel>
           </div>
         </div>
       </Tabs>
